@@ -77,6 +77,7 @@ class SetSettings:
         SetSettings._set2yml(data, "repo", "link", "input git repo link")
         SetSettings._set2yml(data, "storage", "absolutePath", "input absolute path to vault",
                              check=SetSettings._checkStorage)
+        data["repo"].setdefault("segmentSize", 45)
         SetSettings._writeConfig(data)
         print(f"settings saved to {CONFIG_FILE}")
 

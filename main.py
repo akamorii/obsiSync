@@ -6,6 +6,7 @@ import zipfile
 from datetime import date, datetime
 from crypto import Crypt
 from gitScript import GitScript
+from segment import Segment
 from setSettings import loadConfig
 from synchronize import IGNORED_DIRS, Synchronize
 
@@ -18,6 +19,7 @@ class Main:
         self.encrypted = bool(config["crypt"]["encrypted"])
         if not os.path.isdir(self.storage):
             raise RuntimeError(f"storage '{self.storage}' doesn't exist")
+        self.segmentSize = int(config["repo"].get("segmentSize", 45)) * 1024 * 1024
         self.git = GitScript(config["repo"]["link"])
         self.sync = Synchronize(self.storage)
 
@@ -42,18 +44,20 @@ class Main:
 
 
     def _mergeLatest(self, tmp):
-        archive = self.git.latestArchive()
-        if archive is None:
+        folder = self.git.latestArchive()
+        if folder is None:
             return None
+        self.git.checkout(folder)
+        archive = Segment.join(os.path.join(self.git.path, folder), tmp)
         zipPath = os.path.join(tmp, "incoming.zip")
         if archive.endswith(".enc"):
             Crypt().decryptFile(archive, zipPath)
         else:
-            shutil.copy(archive, zipPath)
+            shutil.move(archive, zipPath)
         unpacked = os.path.join(tmp, "incoming")
         with zipfile.ZipFile(zipPath) as zf:
             zf.extractall(unpacked)
-        print(f"merging {os.path.basename(archive)} into {self.storage}")
+        print(f"merging {folder} into {self.storage}")
         report = self.sync.merge(unpacked)
         Main._printReport(report)
         return report
@@ -68,20 +72,23 @@ class Main:
 
     def send(self):
         self.git.prepare()
-        name = date.today().isoformat() + (".zip.enc" if self.encrypted else ".zip")
+        folder = date.today().isoformat()
         with tempfile.TemporaryDirectory() as tmp:
             # сначала вливаем то, что уже есть в репо, чтобы не затереть чужие изменения
             self._mergeLatest(tmp)
-            zipPath = os.path.join(tmp, "outgoing.zip")
+            zipPath = os.path.join(tmp, "vault.zip")
             Main._pack(self.storage, zipPath)
-            target = os.path.join(self.git.path, name)
             if self.encrypted:
-                Crypt().encryptFile(zipPath, target)
-            else:
-                shutil.copy(zipPath, target)
-        self.git.push(name, f"sync {datetime.now():%Y-%m-%d %H:%M:%S}")
+                Crypt().encryptFile(zipPath, zipPath + ".enc")
+                zipPath += ".enc"
+            # архив за сегодня заменяется целиком
+            self.git.checkout(folder)
+            target = os.path.join(self.git.path, folder)
+            shutil.rmtree(target, ignore_errors=True)
+            parts = Segment.split(zipPath, target, self.segmentSize)
+        self.git.push(folder, f"sync {datetime.now():%Y-%m-%d %H:%M:%S}")
         self.sync.saveState(Synchronize.snapshot(self.storage))
-        print(f"pushed {name}")
+        print(f"pushed {folder} ({len(parts)} segment(s))")
 
 
 if __name__ == '__main__':
