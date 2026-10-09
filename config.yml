@@ -1,0 +1,6 @@
+crypt:
+  encrypted: true
+repo:
+  link: https://github.com/akamorii/obsi_programming_db.git
+storage:
+  absolutePath: /Users/artem/Documents/obsidian
